@@ -3,6 +3,10 @@
 This module creates a new chord_node and adds it to the network
 """
 import sys
+import hashlib
+import csv
+import threading
+
 M = 3  # FIXME: Test environment, normally = hashlib.sha1().digest_size * 8
 NODES = 2**M
 BUF_SZ = 4096  # socket recv arg
@@ -109,7 +113,9 @@ class FingerEntry(object):
         self.next_start = (n + 2**k) % NODES if k < M else n
         self.interval = ModRange(self.start, self.next_start, NODES)
         self.node = node
-
+        
+        # text = "n={n}, k={k}, node={node}, start={start}, next_start={next_start}, interval={interval}".format(n=n, k=k, node=self.node, start=self.start, next_start=self.start, interval=self.interval)
+        # print(text)
     def __repr__(self):
         """ Something like the interval|node charts in the paper """
         return ''.format(self.start, self.next_start, self.node)
@@ -126,6 +132,14 @@ class ChordNode(object):
         self.predecessor = None
         self.keys = {}
 
+    # Z
+    def run(self):
+        listener = threading.Thread(target=self.start_listener)
+        subscriber = threading.Thread(target=self.start_subscriber)
+        listener.start()
+        # time.sleep(ONE_SEC)  # give lister time to set port dynamically
+        subscriber.start()
+
     @property
     def successor(self):
         return self.finger[1].node
@@ -138,3 +152,34 @@ class ChordNode(object):
         """ Ask this node to find id's successor = successor(predecessor(id))"""
         np = self.find_predecessor(id)
         return self.call_rpc(np, 'successor')
+    
+    # def hash_data(file = "Career_Stats_Passing.csv"):
+    #     with open(file, mode ='r')as f:
+    #         csvFile = csv.reader(f)
+    #         for index, lines in enumerate(csvFile):
+    #             if(index < 5): 
+    #                 before = lines[0]+lines[3]
+    #                 result = hashlib.sha1(before.encode())
+    #                 print(before, ":",result.hexdigest(), '\n', end="")
+
+    # def hash_nodes(file = "Career_Stats_Passing", port = 50102):
+    #     before = file + str(port)
+    #     result = hashlib.sha1(before.encode())
+    #     print(before, ":",result.hexdigest(), '\n', end="")
+
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("Usage: python chord_node.py PORT_NUMBER_EXISTING_NODE_OR_0")
+        exit(1)
+    
+    # run()
+    
+   
+    
+
+        
+       
+    
+    
