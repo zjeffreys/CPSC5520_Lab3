@@ -131,12 +131,41 @@ class FingerEntry(object):
 HOST = 'localhost'
 class ChordNode(object):
     """Use port number of previous to get node's id. If zero create new network"""
-    def __init__(self, n):
+    def __init__(self, n, other = -1):
         self.node = n
         self.finger = [None] + [FingerEntry(n, k) for k in range(1, M+1)]  # indexing starts at 1
         self.predecessor = None
         self.keys = {} 
-        self.start_dispatch(n)
+        
+        
+        if(other != -1):
+            self.join(other)
+        
+        # Create a thread to handle listening for messages
+        threading.Thread(target=self.start_dispatch, args=(n,)).start()  
+
+        
+    def join(self,node_in_network):
+        self.initialize_finger_table(node_in_network)
+
+    def initialize_finger_table(self, node_in_network):
+        self.finger[1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start)
+        print("self.finger[1].node", self.finger[1].node)
+        self.predecessor = self.call_rpc(self.successor, 'predecessor')
+        self.call_rpc(self.successor, 'predecessor', self.node)
+        print(self.finger[1].node, self.finger[2].node)
+    
+    def call_rpc(self, id, procedure, arg1=None, arg2=None):
+        address = ('localhost', BASE_MIN+id)
+        print("Address")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.connect(address)
+                sock.sendall(pickle.dumps((procedure, arg1, arg2)))
+                return pickle.loads(sock.recv(2048))
+            except Exception as e:
+                return None
+
 
     def start_dispatch(self, n):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -145,10 +174,9 @@ class ChordNode(object):
             s.listen()
             print("listening for changes on port", port)
             while True:
-                conn, addr = s.accept()
-                self.handle_rpc(addr)
-
-        
+                client, addr = s.accept()
+                with client:
+                    threading.Thread(target=self.handle_rpc, args=(client,)).start()     
 
     @property
     def successor(self):
@@ -159,15 +187,48 @@ class ChordNode(object):
         self.finger[1].node = id
 
     def find_successor(self, id):
-        """ Ask this node to find id's successor = successor(predecessor(id))"""
         np = self.find_predecessor(id)
         return self.call_rpc(np, 'successor')
+    
+    def find_predecessor(self, id):
+        np = int(self.node)
+        print("succ", self.call_rpc(np, 'successor'))
+        while id not in ModRange(np+1, self.call_rpc(np, 'successor')+1):
+            np = self.call_rpc(np, 'closest_preceding_finger', id)
+        return np
     
     def handle_rpc(self, client):
         rpc = client.recv(BUF_SZ)
         method, arg1, arg2 = pickle.loads(rpc)
         result = self.dispatch_rpc(method, arg1, arg2)
         client.sendall(pickle.dumps(result))
+
+    def dispatch_rpc(self, method, arg1, arg2):
+        if method == "successor":
+            return self.finger[1].node
+        elif method == 'predecessor':
+            if arg1:
+                self.predecessor = arg1
+                return "OK"
+            else:
+                return self.predecessor
+        elif hasattr(self, method):
+            print (method, arg1, arg2)
+            proc_method = getattr(self, method)
+
+			# call the method according to how many arguments there are
+            if arg1 and arg2:
+                result = proc_method(arg1, arg2)
+            elif arg1:
+                result = proc_method(arg1)
+            else:
+                result = proc_method()
+            return result
+        else: 
+            val = "invalid message >:/"
+            print(val)
+            return val
+
     
     def update_others(self):
         """ Update all other node that should have this node in their finger tables """
@@ -205,14 +266,18 @@ def getNodeId(host, port):
         return key
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
         print("Usage: python chord_node.py n(Number between 0 and 15}")
         exit(1)
 
-    n = int(sys.argv[1])
-    node = ChordNode(n) 
-    node.run()
-
+    
+    if(len(sys.argv) == 2):
+        n = int(sys.argv[1])
+        node = ChordNode(n) 
+    if(len(sys.argv) == 3):
+        n = int(sys.argv[1])
+        node_in_network = int(sys.argv[2])
+        node = ChordNode(n, node_in_network) 
     
    
     
