@@ -124,7 +124,7 @@ class FingerEntry(object):
     def __repr__(self):
         """ Something like the interval|node charts in the paper """
         # return ''.format(self.start, self.next_start, self.node) #professors code wasn't showing anything
-        formatted = "{start} | {start}, {next_start} | {node}".format(start = self.start, next_start = self.next_start, node = self.node)
+        formatted = "[{start} | {start}, {next_start} | {node}]".format(start = self.start, next_start = self.next_start, node = self.node)
         return formatted
 
     def __contains__(self, id):
@@ -145,20 +145,40 @@ class ChordNode(object):
         
         if(other != -1):
             self.join(other)
+
+        #just for debugging
+        if(other == -1):
+            print(self.finger)
         
         # Create a thread to handle listening for messages
         threading.Thread(target=self.start_dispatch, args=(n,)).start()  
 
         
     def join(self,node_in_network):
-        self.initialize_finger_table(node_in_network)
+        self.initialize_finger_table(node_in_network) # init_finger_table(n')
+        self.update_others()# update_others()
 
     def initialize_finger_table(self, node_in_network):
-        self.finger[1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start)
+        print("Initializing Finger Table:")
+
+        self.finger[1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start) 
+        print("Node", self.node, "finger[1].node =", self.finger[1].node)
+
         self.predecessor = self.call_rpc(self.successor, 'predecessor') 
-        self.call_rpc(self.successor, 'predecessor', self.node)
+        print("Node", self.node, "predecessor =", self.predecessor)
+
+        self.call_rpc(self.successor, 'predecessor', self.node) # Set successors predecessor to current node
+        print("Node", self.node, "")
+
+        for i in range(1,M ):
+            if(self.finger[i + 1].start in ModRange(self.node, self.finger[i].node)):
+                self.finger[i+1].node = self.finger[i].node
+            else:
+                self.finger[i + 1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start) 
+        print("After initialization: ", self.finger)
 
     def call_rpc(self, id, procedure, arg1=None, arg2=None):
+        print("Calling RPC", id, procedure, arg1, arg2)
         if(self.node == id): # in case nodes successor to contact is itself
             return self.node
         address = ('localhost', BASE_MIN+id)
@@ -182,6 +202,7 @@ class ChordNode(object):
 
     @property
     def successor(self):
+        # print("returning successor for node ", self.node, ", Equals:", self.finger[1].node)
         return self.finger[1].node
 
     @successor.setter
@@ -193,6 +214,8 @@ class ChordNode(object):
         return self.call_rpc(np, 'successor')
     
     def find_predecessor(self, id):
+        # while the id is not in the range from current node to successor 
+        # where id is the node we are looking fors r pred
         np = int(self.node)
         while id not in ModRange(np+1, self.call_rpc(np, 'successor')+1):
             np = self.call_rpc(np, 'closest_preceding_finger', id)
@@ -202,52 +225,57 @@ class ChordNode(object):
         rpc = client.recv(BUF_SZ)
         method, arg1, arg2 = pickle.loads(rpc)
         result = self.dispatch_rpc(method, arg1, arg2)
-        print(client)
-        print("result:", result)
+        
+        print(self.finger)
         client.sendall(pickle.dumps(result))
 
     def dispatch_rpc(self, method, arg1, arg2):
         if method == "find_successor":
-            print("RPC=>", method, " called, arg1:", arg1)
             succ = self.find_successor(arg1)
-            print("Returning successor ", succ)
             return succ
         if method == "successor":
             return self.finger[1].node
-        elif method == 'predecessor':
+        if method == 'predecessor':
             print("RPC=>", method, " called, arg1:", arg1, ", arg2: ", arg2)
             if arg1:
                 self.predecessor = arg1
+                print("updated node ", self.node, "to predecessor ", self.predecessor)
                 return "OK"
             else:
                 return self.predecessor
-        else:
-            print(method)
-            exit(202)
-        # elif hasattr(self, method):
-        #     print (method, arg1, arg2)
-        #     proc_method = getattr(self, method)
+        if method == 'update_finger_table':
+            print("update_finger_table called YES")
+            exit(1)
+        elif method == 'closest_preceding_finger':
+            print('closest_preceding_finger')
+            exit(1)
+        # else:
+        #     print(method)
+        #     exit(202)
+        elif hasattr(self, method):
+            print (method, arg1, arg2)
+            proc_method = getattr(self, method)
 
-		# 	# call the method according to how many arguments there are
-        #     if arg1 and arg2:
-        #         result = proc_method(arg1, arg2)
-        #     elif arg1:
-        #         result = proc_method(arg1)
-        #     else:
-        #         result = proc_method()
-        #     return result
-        # else: 
-        #     val = "invalid message >:/"
-        #     print(val)
-        #     return val
+			# call the method according to how many arguments there are
+            if arg1 and arg2:
+                result = proc_method(arg1, arg2)
+            elif arg1:
+                result = proc_method(arg1)
+            else:
+                result = proc_method()
+            return result
+        else: 
+            val = "invalid message >:/"
+            print(val)
+            return val
 
     
     def update_others(self):
         """ Update all other node that should have this node in their finger tables """
-        # print('update_others()')
-        for i in range(1, M+1):  # find last node p whose i-th finger might be this node
+        for i in range(1, M):  # find last node p whose i-th finger might be this node
             # FIXME: bug in paper, have to add the 1 +
             p = self.find_predecessor((1 + self.node - 2**(i-1) + NODES) % NODES)
+            print("RAWR", p)
             self.call_rpc(p, 'update_finger_table', self.node, i)
 
     def update_finger_table(self, s, i):
