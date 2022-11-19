@@ -8,6 +8,7 @@ import csv
 import threading
 import pickle 
 import socket
+import time
 
 M = 4  # FIXME: Test environment, normally = hashlib.sha1().digest_size * 8
 NODES = 2**M
@@ -154,42 +155,30 @@ class ChordNode(object):
 
     def initialize_finger_table(self, node_in_network):
         self.finger[1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start)
-        print("TEST 1 (self.successor, 3) ",  self.finger[1].node)
-        print("(self.successor: ", self.successor)
         self.predecessor = self.call_rpc(self.successor, 'predecessor') 
-        print("TEST 2 (self.predecessor)", self.predecessor)
-        exit(1)
         self.call_rpc(self.successor, 'predecessor', self.node)
-    
+
     def call_rpc(self, id, procedure, arg1=None, arg2=None):
         if(self.node == id): # in case nodes successor to contact is itself
             return self.node
         address = ('localhost', BASE_MIN+id)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect(address)
-        sock.sendall(pickle.dumps((procedure, arg1, arg2)))
-        data = pickle.loads(sock.recv(2048))
-        sock.close()
-        return data
-        # with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        #     try:
-        #         sock.connect(address)
-        #         sock.sendall(pickle.dumps((procedure, arg1, arg2)))
-        #         return pickle.loads(sock.recv(2048))
-        #     except Exception as e:
-        #         return None
+        
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.connect(address)
+                sock.sendall(pickle.dumps((procedure, arg1, arg2)))
+                return pickle.loads(sock.recv(BUF_SZ))
+            except Exception as e:
+                return "SOCKET ERROR"
 
 
     def start_dispatch(self, n):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((HOST, BASE_MIN + n))
-            port = s.getsockname()
-            s.listen()
-            print("listening for changes on port", port)
-            while True:
-                client, addr = s.accept()
-                with client:
-                    threading.Thread(target=self.handle_rpc, args=(client,)).start()     
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind((HOST, BASE_MIN + n))
+        listener.listen(BACKLOG)
+        while True:
+            client, addr = listener.accept()
+            threading.Thread(target=self.handle_rpc, args=(client,)).start()   
 
     @property
     def successor(self):
@@ -232,6 +221,9 @@ class ChordNode(object):
                 return "OK"
             else:
                 return self.predecessor
+        else:
+            print(method)
+            exit(202)
         # elif hasattr(self, method):
         #     print (method, arg1, arg2)
         #     proc_method = getattr(self, method)
