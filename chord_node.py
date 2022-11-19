@@ -16,7 +16,7 @@ BACKLOG = 100  # socket listen arg
 TEST_BASE = 43544  # for testing use port numbers on localhost at TEST_BASE+n
 BASE_MIN = 50000
 BASE_MAX = BASE_MIN + NODES # basically only allow dynamic ports within this range
-
+HOST = 'localhost'
 
 class ModRange(object):
     """
@@ -38,7 +38,7 @@ class ModRange(object):
     [0, 1, 2, 3, 4]
     """
 
-    def __init__(self, start, stop, divisor):
+    def __init__(self, start, stop, divisor=NODES):
         self.divisor = divisor
         self.start = start % self.divisor
         self.stop = stop % self.divisor
@@ -122,21 +122,25 @@ class FingerEntry(object):
         
     def __repr__(self):
         """ Something like the interval|node charts in the paper """
-        return ''.format(self.start, self.next_start, self.node)
+        # return ''.format(self.start, self.next_start, self.node) #professors code wasn't showing anything
+        formatted = "{start} | {start}, {next_start} | {node}".format(start = self.start, next_start = self.next_start, node = self.node)
+        return formatted
 
     def __contains__(self, id):
         """ Is the given id within this finger's interval? """
         return id in self.interval
 
-HOST = 'localhost'
 class ChordNode(object):
     """Use port number of previous to get node's id. If zero create new network"""
     def __init__(self, n, other = -1):
         self.node = n
-        self.finger = [None] + [FingerEntry(n, k) for k in range(1, M+1)]  # indexing starts at 1
-        self.predecessor = None
+        if(other == -1):
+            self.finger = [None] + [FingerEntry(n, k, self.node) for k in range(1, M+1)]  # indexing starts at 1
+            self.predecessor = self.node
+        else:
+            self.finger = [None] + [FingerEntry(n, k) for k in range(1, M+1)]  # indexing starts at 1
+            self.predecessor = None
         self.keys = {} 
-        
         
         if(other != -1):
             self.join(other)
@@ -150,21 +154,30 @@ class ChordNode(object):
 
     def initialize_finger_table(self, node_in_network):
         self.finger[1].node = self.call_rpc(node_in_network, 'find_successor', self.finger[1].start)
-        print("self.finger[1].node", self.finger[1].node)
-        self.predecessor = self.call_rpc(self.successor, 'predecessor')
+        print("TEST 1 (self.successor, 3) ",  self.finger[1].node)
+        print("(self.successor: ", self.successor)
+        self.predecessor = self.call_rpc(self.successor, 'predecessor') 
+        print("TEST 2 (self.predecessor)", self.predecessor)
+        exit(1)
         self.call_rpc(self.successor, 'predecessor', self.node)
-        print(self.finger[1].node, self.finger[2].node)
     
     def call_rpc(self, id, procedure, arg1=None, arg2=None):
+        if(self.node == id): # in case nodes successor to contact is itself
+            return self.node
         address = ('localhost', BASE_MIN+id)
-        print("Address")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.connect(address)
-                sock.sendall(pickle.dumps((procedure, arg1, arg2)))
-                return pickle.loads(sock.recv(2048))
-            except Exception as e:
-                return None
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect(address)
+        sock.sendall(pickle.dumps((procedure, arg1, arg2)))
+        data = pickle.loads(sock.recv(2048))
+        sock.close()
+        return data
+        # with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        #     try:
+        #         sock.connect(address)
+        #         sock.sendall(pickle.dumps((procedure, arg1, arg2)))
+        #         return pickle.loads(sock.recv(2048))
+        #     except Exception as e:
+        #         return None
 
 
     def start_dispatch(self, n):
@@ -192,7 +205,6 @@ class ChordNode(object):
     
     def find_predecessor(self, id):
         np = int(self.node)
-        print("succ", self.call_rpc(np, 'successor'))
         while id not in ModRange(np+1, self.call_rpc(np, 'successor')+1):
             np = self.call_rpc(np, 'closest_preceding_finger', id)
         return np
@@ -201,33 +213,41 @@ class ChordNode(object):
         rpc = client.recv(BUF_SZ)
         method, arg1, arg2 = pickle.loads(rpc)
         result = self.dispatch_rpc(method, arg1, arg2)
+        print(client)
+        print("result:", result)
         client.sendall(pickle.dumps(result))
 
     def dispatch_rpc(self, method, arg1, arg2):
+        if method == "find_successor":
+            print("RPC=>", method, " called, arg1:", arg1)
+            succ = self.find_successor(arg1)
+            print("Returning successor ", succ)
+            return succ
         if method == "successor":
             return self.finger[1].node
         elif method == 'predecessor':
+            print("RPC=>", method, " called, arg1:", arg1, ", arg2: ", arg2)
             if arg1:
                 self.predecessor = arg1
                 return "OK"
             else:
                 return self.predecessor
-        elif hasattr(self, method):
-            print (method, arg1, arg2)
-            proc_method = getattr(self, method)
+        # elif hasattr(self, method):
+        #     print (method, arg1, arg2)
+        #     proc_method = getattr(self, method)
 
-			# call the method according to how many arguments there are
-            if arg1 and arg2:
-                result = proc_method(arg1, arg2)
-            elif arg1:
-                result = proc_method(arg1)
-            else:
-                result = proc_method()
-            return result
-        else: 
-            val = "invalid message >:/"
-            print(val)
-            return val
+		# 	# call the method according to how many arguments there are
+        #     if arg1 and arg2:
+        #         result = proc_method(arg1, arg2)
+        #     elif arg1:
+        #         result = proc_method(arg1)
+        #     else:
+        #         result = proc_method()
+        #     return result
+        # else: 
+        #     val = "invalid message >:/"
+        #     print(val)
+        #     return val
 
     
     def update_others(self):
@@ -272,9 +292,11 @@ if __name__ == '__main__':
 
     
     if(len(sys.argv) == 2):
+        print("Starting Network...\n")
         n = int(sys.argv[1])
         node = ChordNode(n) 
     if(len(sys.argv) == 3):
+        print("Adding node ", sys.argv[1], "to network from node: ", sys.argv[2], "\n")
         n = int(sys.argv[1])
         node_in_network = int(sys.argv[2])
         node = ChordNode(n, node_in_network) 
